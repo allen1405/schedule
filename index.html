@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Schedule">
+  <meta name="theme-color" content="#6366f1">
+  <title>Shared Schedule</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+  <style>
+    body { 
+      margin: 0; 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    .safe-top { padding-top: env(safe-area-inset-top); }
+    .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+    @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .sync-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // Firebase Configuration - Already set up for you!
+    const firebaseConfig = {
+      apiKey: "AIzaSyBeVZLD7_xwX41pWJ6OfVFWc51mIUdaoHU",
+      authDomain: "shared-schedule-de0d6.firebaseapp.com",
+      databaseURL: "https://shared-schedule-de0d6-default-rtdb.firebaseio.com",
+      projectId: "shared-schedule-de0d6",
+      storageBucket: "shared-schedule-de0d6.firebasestorage.app",
+      messagingSenderId: "331353447936",
+      appId: "1:331353447936:web:b4c1048663267dc67b42e5"
+    };
+
+    // Initialize Firebase
+    let db = null;
+    let firebaseEnabled = false;
+    
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.database();
+      firebaseEnabled = true;
+    } catch (error) {
+      console.error("Firebase initialization error:", error);
+    }
+
+    const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+    const CATEGORIES = [
+      { name: 'Work', color: 'bg-blue-500', lightColor: 'bg-blue-100', textColor: 'text-blue-700' },
+      { name: 'School', color: 'bg-cyan-500', lightColor: 'bg-cyan-100', textColor: 'text-cyan-700' },
+      { name: 'Exercise', color: 'bg-green-500', lightColor: 'bg-green-100', textColor: 'text-green-700' },
+      { name: 'Study', color: 'bg-purple-500', lightColor: 'bg-purple-100', textColor: 'text-purple-700' },
+      { name: 'Read', color: 'bg-amber-600', lightColor: 'bg-amber-100', textColor: 'text-amber-700' },
+      { name: 'Sleep', color: 'bg-indigo-800', lightColor: 'bg-indigo-100', textColor: 'text-indigo-800' },
+      { name: 'Food', color: 'bg-red-500', lightColor: 'bg-red-100', textColor: 'text-red-700' },
+      { name: 'Leisure', color: 'bg-orange-500', lightColor: 'bg-orange-100', textColor: 'text-orange-700' },
+      { name: 'Social', color: 'bg-pink-500', lightColor: 'bg-pink-100', textColor: 'text-pink-700' },
+      { name: 'Chores', color: 'bg-yellow-500', lightColor: 'bg-yellow-100', textColor: 'text-yellow-700' },
+      { name: 'Other', color: 'bg-gray-500', lightColor: 'bg-gray-100', textColor: 'text-gray-700' },
+    ];
+
+    const formatTime = (time) => {
+      if (typeof time === 'object' && time.hour !== undefined) {
+        const h = time.hour % 12 || 12;
+        const ampm = time.hour < 12 ? 'AM' : 'PM';
+        const min = time.minute.toString().padStart(2, '0');
+        return `${h}:${min} ${ampm}`;
+      }
+      const hour = typeof time === 'number' ? time : 0;
+      const h = hour % 12 || 12;
+      const ampm = hour < 12 ? 'AM' : 'PM';
+      return `${h}:00 ${ampm}`;
+    };
+
+    const timeToMinutes = (time) => {
+      if (typeof time === 'object') return time.hour * 60 + time.minute;
+      return time * 60;
+    };
+
+    const calculateDuration = (start, end) => {
+      const startMins = timeToMinutes(start);
+      const endMins = timeToMinutes(end);
+      const diff = endMins - startMins;
+      const hours = Math.floor(diff / 60);
+      const mins = diff % 60;
+      if (hours === 0) return `${mins}m`;
+      if (mins === 0) return `${hours}h`;
+      return `${hours}h ${mins}m`;
+    };
+
+    const getWeekDates = (weekOffset = 0) => {
+      const today = new Date();
+      const currentDay = today.getDay();
+      const mondayOffset = currentDay === 0 ? -6 : 1 - currentDay;
+      const monday = new Date(today);
+      monday.setDate(today.getDate() + mondayOffset + (weekOffset * 7));
+      return DAYS.map((_, index) => {
+        const date = new Date(monday);
+        date.setDate(monday.getDate() + index);
+        return date;
+      });
+    };
+
+    const formatDate = (date) => date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const getTodayIndex = () => { const day = new Date().getDay(); return day === 0 ? 6 : day - 1; };
+
+    const STORAGE_KEY = 'shared-schedule-data';
+    const USER_KEY = 'shared-schedule-user';
+
+    function App() {
+      const [currentUser, setCurrentUser] = useState(() => localStorage.getItem(USER_KEY) || 'Dibol');
+      const [weekOffset, setWeekOffset] = useState(0);
+      const [selectedDayIndex, setSelectedDayIndex] = useState(getTodayIndex());
+      const [activities, setActivities] = useState({ 'Dibol': [], 'Dibolache': [] });
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [showStats, setShowStats] = useState(false);
+      const [isOnline, setIsOnline] = useState(false);
+      const [newActivity, setNewActivity] = useState({
+        name: '', category: 'Work', day: DAYS[selectedDayIndex], 
+        startTime: { hour: 9, minute: 0 }, 
+        endTime: { hour: 10, minute: 0 },
+      });
+
+      useEffect(() => { localStorage.setItem(USER_KEY, currentUser); }, [currentUser]);
+
+      useEffect(() => {
+        if (!firebaseEnabled || !db) {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) { try { setActivities(JSON.parse(saved)); } catch (e) {} }
+          return;
+        }
+
+        const activitiesRef = db.ref('activities');
+        activitiesRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setActivities({ 'Dibol': data['Dibol'] || [], 'Dibolache': data['Dibolache'] || [] });
+          }
+          setIsOnline(true);
+        }, () => setIsOnline(false));
+
+        const connectedRef = db.ref('.info/connected');
+        connectedRef.on('value', (snap) => setIsOnline(snap.val() === true));
+
+        return () => { activitiesRef.off(); connectedRef.off(); };
+      }, []);
+
+      const saveActivities = useCallback((newActivities) => {
+        setActivities(newActivities);
+        if (firebaseEnabled && db) {
+          db.ref('activities').set(newActivities).catch(() => {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(newActivities));
+          });
+        } else {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(newActivities));
+        }
+      }, []);
+
+      const weekDates = getWeekDates(weekOffset);
+      const weekLabel = `${formatDate(weekDates[0])} - ${formatDate(weekDates[6])}`;
+
+      const addActivity = () => {
+        if (!newActivity.name.trim()) return;
+        const startMins = timeToMinutes(newActivity.startTime);
+        const endMins = timeToMinutes(newActivity.endTime);
+        if (startMins >= endMins) { alert('End time must be after start time'); return; }
+        const activity = { 
+          ...newActivity, 
+          id: Date.now(), 
+          weekOffset,
+          startTime: newActivity.startTime,
+          endTime: newActivity.endTime
+        };
+        saveActivities({ ...activities, [currentUser]: [...activities[currentUser], activity] });
+        setNewActivity({ name: '', category: 'Work', day: DAYS[selectedDayIndex], startTime: { hour: 9, minute: 0 }, endTime: { hour: 10, minute: 0 } });
+        setShowAddModal(false);
+      };
+
+      const deleteActivity = (id) => {
+        saveActivities({ ...activities, [currentUser]: activities[currentUser].filter(a => a.id !== id) });
+      };
+
+      const getActivitiesForDay = (day, user) => {
+        return (activities[user] || []).filter(
+          a => a.day === day && (a.weekOffset === weekOffset || a.weekOffset === undefined)
+        ).sort((a, b) => {
+          const aStart = a.startTime ? timeToMinutes(a.startTime) : (a.startHour * 60);
+          const bStart = b.startTime ? timeToMinutes(b.startTime) : (b.startHour * 60);
+          return aStart - bStart;
+        });
+      };
+
+      const getCategoryColor = (name) => CATEGORIES.find(c => c.name === name) || CATEGORIES[10];
+
+      const calculateWeeklyStats = (user) => {
+        const stats = {};
+        (activities[user] || []).filter(a => a.weekOffset === weekOffset || a.weekOffset === undefined)
+          .forEach(activity => {
+            const startMins = activity.startTime ? timeToMinutes(activity.startTime) : (activity.startHour * 60);
+            const endMins = activity.endTime ? timeToMinutes(activity.endTime) : (activity.endHour * 60);
+            const duration = (endMins - startMins) / 60;
+            if (!stats[activity.category]) stats[activity.category] = { hours: 0 };
+            stats[activity.category].hours += duration;
+          });
+        return stats;
+      };
+
+      const totalHours = (user) => Object.values(calculateWeeklyStats(user)).reduce((sum, s) => sum + s.hours, 0);
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 pb-20">
+          <div className="bg-white shadow-sm sticky top-0 z-40 safe-top">
+            <div className="px-4 py-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h1 className="text-xl font-bold text-slate-800">📅 Schedule</h1>
+                  <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${isOnline ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {isOnline ? <><div className="w-2 h-2 bg-green-500 rounded-full sync-dot" /><span>Synced</span></> : <><span>📴</span><span>Local</span></>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+                  {['Dibol', 'Dibolache'].map(user => (
+                    <button key={user} onClick={() => setCurrentUser(user)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${currentUser === user ? 'bg-indigo-500 text-white shadow-sm' : 'text-slate-600'}`}>
+                      {user}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center justify-center gap-2 mt-3">
+                <button onClick={() => setWeekOffset(p => p - 1)} className="p-2 rounded-lg hover:bg-slate-100 text-lg">◀</button>
+                <div className="text-sm font-semibold text-slate-700 min-w-36 text-center">{weekLabel}</div>
+                <button onClick={() => setWeekOffset(p => p + 1)} className="p-2 rounded-lg hover:bg-slate-100 text-lg">▶</button>
+                {weekOffset !== 0 && <button onClick={() => setWeekOffset(0)} className="text-xs text-indigo-500 font-medium">Today</button>}
+              </div>
+            </div>
+            <div className="overflow-x-auto scrollbar-hide border-t border-slate-100">
+              <div className="flex px-2 py-2 gap-1 min-w-max">
+                {DAYS.map((day, index) => {
+                  const isToday = weekOffset === 0 && index === getTodayIndex();
+                  const hasActivities = getActivitiesForDay(day, currentUser).length > 0;
+                  return (
+                    <button key={day} onClick={() => setSelectedDayIndex(index)}
+                      className={`flex flex-col items-center px-3 py-2 rounded-xl min-w-14 ${selectedDayIndex === index ? 'bg-indigo-500 text-white' : isToday ? 'bg-indigo-100 text-indigo-700' : 'text-slate-600'}`}>
+                      <span className="text-xs font-medium">{day.slice(0, 3)}</span>
+                      <span className="text-lg font-bold">{weekDates[index].getDate()}</span>
+                      {hasActivities && selectedDayIndex !== index && <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${isToday ? 'bg-indigo-500' : 'bg-slate-400'}`} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3">
+            <button onClick={() => setShowStats(!showStats)}
+              className={`w-full mb-3 flex items-center justify-center gap-2 py-3 rounded-xl font-medium ${showStats ? 'bg-emerald-500 text-white shadow-md' : 'bg-white text-slate-700 shadow-sm border border-slate-200'}`}>
+              📊 {showStats ? 'Hide' : 'Show'} Weekly Stats
+            </button>
+
+            {showStats && (
+              <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
+                <h2 className="text-lg font-bold text-slate-800 mb-4">⏱️ Weekly Summary</h2>
+                <div className="space-y-4">
+                  {['Dibol', 'Dibolache'].map(user => {
+                    const stats = calculateWeeklyStats(user);
+                    const total = totalHours(user);
+                    return (
+                      <div key={user} className={`p-3 rounded-xl ${user === currentUser ? 'bg-indigo-50 ring-2 ring-indigo-200' : 'bg-slate-50'}`}>
+                        <h3 className="font-semibold text-slate-700 mb-3">{user}</h3>
+                        <div className="space-y-2">
+                          {Object.entries(stats).length === 0 ? <p className="text-sm text-slate-400 italic">No activities</p> :
+                            Object.entries(stats).map(([category, data]) => {
+                              const cat = getCategoryColor(category);
+                              const pct = total > 0 ? (data.hours / total * 100).toFixed(0) : 0;
+                              return (
+                                <div key={category} className="flex items-center gap-2">
+                                  <div className={`w-2.5 h-2.5 rounded-full ${cat.color}`} />
+                                  <span className="text-xs text-slate-600 flex-1">{category}</span>
+                                  <div className="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                    <div className={`h-full ${cat.color}`} style={{ width: `${pct}%` }} />
+                                  </div>
+                                  <span className="text-xs font-semibold text-slate-700 w-12 text-right">{data.hours % 1 === 0 ? data.hours : data.hours.toFixed(1)}h</span>
+                                </div>
+                              );
+                            })}
+                        </div>
+                        <div className="mt-3 pt-3 border-t border-slate-200 flex justify-between">
+                          <span className="text-sm font-medium text-slate-600">Total</span>
+                          <span className="text-lg font-bold text-slate-800">{total}h</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+              <div className="bg-slate-50 px-4 py-3 border-b border-slate-100">
+                <h3 className="font-semibold text-slate-700">{DAYS[selectedDayIndex]}, {formatDate(weekDates[selectedDayIndex])}</h3>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                {getActivitiesForDay(DAYS[selectedDayIndex], currentUser).length === 0 ? (
+                  <div className="px-4 py-8 text-center text-slate-400">
+                    <div className="text-4xl mb-2">📅</div>
+                    <p>No activities scheduled</p>
+                    <p className="text-sm">Tap + to add one</p>
+                  </div>
+                ) : (
+                  getActivitiesForDay(DAYS[selectedDayIndex], currentUser).map(activity => {
+                    const cat = getCategoryColor(activity.category);
+                    const startTime = activity.startTime || { hour: activity.startHour, minute: 0 };
+                    const endTime = activity.endTime || { hour: activity.endHour, minute: 0 };
+                    const duration = calculateDuration(startTime, endTime);
+                    return (
+                      <div key={activity.id} className={`px-4 py-3 flex items-center gap-3 ${cat.lightColor}`}>
+                        <div className={`w-1 self-stretch rounded-full ${cat.color}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-slate-800 truncate">{activity.name}</div>
+                          <div className="text-sm text-slate-500">{formatTime(startTime)} - {formatTime(endTime)} <span className="text-slate-400">({duration})</span></div>
+                          <div className={`text-xs ${cat.textColor} font-medium`}>{activity.category}</div>
+                        </div>
+                        <button onClick={() => deleteActivity(activity.id)} className="p-2 text-xl text-slate-400">✕</button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {getActivitiesForDay(DAYS[selectedDayIndex], currentUser === 'Dibol' ? 'Dibolache' : 'Dibol').length > 0 && (
+              <div className="bg-white rounded-2xl shadow-lg overflow-hidden mt-4">
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-100">
+                  <h3 className="font-semibold text-slate-500 text-sm">{currentUser === 'Dibol' ? 'Dibolache' : 'Dibol'}'s Schedule</h3>
+                </div>
+                <div className="divide-y divide-slate-100 opacity-60">
+                  {getActivitiesForDay(DAYS[selectedDayIndex], currentUser === 'Dibol' ? 'Dibolache' : 'Dibol').map(activity => {
+                    const cat = getCategoryColor(activity.category);
+                    const startTime = activity.startTime || { hour: activity.startHour, minute: 0 };
+                    const endTime = activity.endTime || { hour: activity.endHour, minute: 0 };
+                    return (
+                      <div key={activity.id} className="px-4 py-2 flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full ${cat.color}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-slate-600 truncate">{activity.name}</div>
+                          <div className="text-xs text-slate-400">{formatTime(startTime)} - {formatTime(endTime)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button onClick={() => { setNewActivity(p => ({ ...p, day: DAYS[selectedDayIndex] })); setShowAddModal(true); }}
+            className="fixed bottom-6 right-6 w-14 h-14 bg-indigo-500 text-white rounded-full shadow-lg flex items-center justify-center text-3xl z-50 safe-bottom">+</button>
+
+          {showAddModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50">
+              <div className="bg-white rounded-t-3xl shadow-2xl p-5 w-full max-h-[90vh] overflow-y-auto safe-bottom">
+                <div className="flex justify-between items-center mb-5">
+                  <h2 className="text-xl font-bold text-slate-800">Add Activity</h2>
+                  <button onClick={() => setShowAddModal(false)} className="p-2 text-xl">✕</button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Activity Name</label>
+                    <input type="text" value={newActivity.name} onChange={(e) => setNewActivity({ ...newActivity, name: e.target.value })}
+                      className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none" placeholder="Enter activity name" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Category</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {CATEGORIES.map(cat => (
+                        <button key={cat.name} onClick={() => setNewActivity({ ...newActivity, category: cat.name })}
+                          className={`p-2 rounded-xl text-xs font-medium ${newActivity.category === cat.name ? `${cat.color} text-white shadow-md` : `${cat.lightColor} ${cat.textColor}`}`}>
+                          {cat.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">Day</label>
+                    <div className="grid grid-cols-7 gap-1">
+                      {DAYS.map(day => (
+                        <button key={day} onClick={() => setNewActivity({ ...newActivity, day })}
+                          className={`py-2 rounded-lg text-xs font-medium ${newActivity.day === day ? 'bg-indigo-500 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                          {day.slice(0, 3)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">Start Time</label>
+                      <input type="time" 
+                        value={`${newActivity.startTime.hour.toString().padStart(2, '0')}:${newActivity.startTime.minute.toString().padStart(2, '0')}`}
+                        onChange={(e) => {
+                          const [h, m] = e.target.value.split(':').map(Number);
+                          setNewActivity({ ...newActivity, startTime: { hour: h, minute: m } });
+                        }}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-base" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">End Time</label>
+                      <input type="time"
+                        value={`${newActivity.endTime.hour.toString().padStart(2, '0')}:${newActivity.endTime.minute.toString().padStart(2, '0')}`}
+                        onChange={(e) => {
+                          const [h, m] = e.target.value.split(':').map(Number);
+                          setNewActivity({ ...newActivity, endTime: { hour: h, minute: m } });
+                        }}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-base" />
+                    </div>
+                  </div>
+                  <div className="text-sm text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
+                    Adding for: <span className="font-semibold text-indigo-600">{currentUser}</span>
+                  </div>
+                  <button onClick={addActivity} className="w-full bg-indigo-500 text-white py-4 rounded-xl font-medium shadow-md">Add Activity</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
